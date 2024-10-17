@@ -9,16 +9,17 @@ dataset = load_dataset("ise-uiuc/Magicoder-OSS-Instruct-75K")
 
 # Load the PyTorch version of GPT-2 tokenizer and model
 tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
-model = GPT2LMHeadModel.from_pretrained("gpt2")
 
 # Set the tokenizer's pad_token to the eos_token
 tokenizer.pad_token = tokenizer.eos_token
+
+model = GPT2LMHeadModel.from_pretrained("gpt2")
 
 # Configure LoRA Settings
 lora_config = LoraConfig(
     r=4,
     lora_alpha=32,
-    target_modules=["c_attn", "c_proj"],  # Corrected typo here
+    target_modules=["c_attn", "c_proj"],
     lora_dropout=0.1,
     bias="none",
     task_type="CAUSAL_LM"
@@ -28,22 +29,25 @@ lora_config = LoraConfig(
 lora_model = get_peft_model(model, lora_config)
 
 # Tokenize the dataset
-# Preprocessing: For this task, we'll use the 'problem' as input and 'solution' as output
 def preprocess_function(examples):
     inputs = examples['problem']
     targets = examples['solution']
     
-    # Tokenize both problem and solution
-    tokenized_inputs = tokenizer(inputs, max_length=512, truncation=True, return_tensors="pt", padding="max_length")
-    tokenized_targets = tokenizer(targets, max_length=512, truncation=True, return_tensors="pt", padding="max_length")
+    # Tokenize both problem and solution without return_tensors
+    tokenized_inputs = tokenizer(inputs, max_length=512, truncation=True, padding='max_length')
+    tokenized_targets = tokenizer(targets, max_length=512, truncation=True, padding='max_length')
     
+    # Return as a dictionary
     return {
-        "input_ids": tokenized_inputs["input_ids"].squeeze(),  # Remove extra dimensions
-        "labels": tokenized_targets["input_ids"].squeeze()     # Remove extra dimensions
+        "input_ids": tokenized_inputs["input_ids"],
+        "labels": tokenized_targets["input_ids"]
     }
 
 # Apply the preprocessing to the dataset
-tokenized_dataset = dataset.map(preprocess_function, batched=True)
+tokenized_dataset = dataset.map(preprocess_function, batched=True, remove_columns=dataset["train"].column_names)
+
+# Set the dataset format to PyTorch tensors
+tokenized_dataset.set_format(type='torch', columns=['input_ids', 'labels'])
 
 # Create a PyTorch DataLoader for batching
 train_dataloader = DataLoader(tokenized_dataset["train"], batch_size=8, shuffle=True)
@@ -64,7 +68,7 @@ for epoch in range(3):  # Run for a few epochs
         labels = batch['labels'].to(device)
         
         # Forward pass
-        outputs = lora_model(input_ids, labels=labels)
+        outputs = lora_model(input_ids=input_ids, labels=labels)
         loss = outputs.loss
         
         # Backward pass
@@ -75,6 +79,8 @@ for epoch in range(3):  # Run for a few epochs
         optimizer.zero_grad()
         
         print(f"Loss: {loss.item()}")
+    
+    print(f"Epoch {epoch+1} completed.")
 
 # Save the fine-tuned LoRA model
 lora_model.save_pretrained("fine-tuned-code-model-lora")
